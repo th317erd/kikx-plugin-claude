@@ -1,0 +1,14 @@
+{
+  "name": "kikx-plugin-claude",
+  "version": "2.0.0",
+  "description": "Claude agent plugin for Kikx — uses @anthropic-ai/sdk",
+  "type": "module",
+  "license": "GPL-3.0",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "node --test --test-force-exit --test-timeout=30000 'spec/**/*-spec.mjs'"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  }
+}
