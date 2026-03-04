@@ -27,12 +27,22 @@ const HTML_INSTRUCTION = [
   'Do not use markdown.',
 ].join(' ');
 
+// Claude API tool names must match [a-zA-Z0-9_-]{1,64} — no colons.
+// Our tool names use pluginId:featureName convention, so we encode/decode.
+function encodeToolName(name) {
+  return name.replace(/:/g, '__');
+}
+
+function decodeToolName(name) {
+  return name.replace(/__/g, ':');
+}
+
 // =============================================================================
 // Plugin setup() — registers ClaudeAgent with the plugin registry
 // =============================================================================
 
 export function setup(pluginContext) {
-  let { context, AgentInterface } = pluginContext;
+  let { context, AgentInterface, registerAgentType } = pluginContext;
 
   if (!AgentInterface)
     throw new Error('kikx-plugin-claude requires AgentInterface in plugin context');
@@ -111,20 +121,24 @@ export function setup(pluginContext) {
             content: [{
               type:  'tool_use',
               id:    (msg.content && msg.content.toolUseId) || `tool_${Date.now()}`,
-              name:  msg.content && msg.content.toolName,
+              name:  encodeToolName(msg.content && msg.content.toolName || ''),
               input: (msg.content && msg.content.arguments) || {},
             }],
           };
 
-        case 'tool-result':
+        case 'tool-result': {
+          let output     = (msg.content && msg.content.output) || '';
+          let resultText = (typeof output === 'string') ? output : JSON.stringify(output);
+
           return {
             role:    'user',
             content: [{
               type:        'tool_result',
               tool_use_id: (msg.content && msg.content.toolUseId) || '',
-              content:     (msg.content && msg.content.output) || '',
+              content:     resultText,
             }],
           };
+        }
 
         case 'reflection':
           return null;
@@ -194,8 +208,9 @@ export function setup(pluginContext) {
     async *_createGenerator(params) {
       let { messages: rawMessages, agent, session, context: executionContext } = params;
 
-      // Resolve API key
-      let apiKey = params.apiKey;
+      // Resolve API key — check params, then agent (pre-decrypted by controller),
+      // then fall back to decrypting encryptedAPIKey
+      let apiKey = params.apiKey || (agent && agent.apiKey);
 
       if (!apiKey && agent && agent.encryptedAPIKey && executionContext) {
         let keystore = executionContext.getProperty
@@ -222,23 +237,31 @@ export function setup(pluginContext) {
       let model     = (agent && agent.model) || DEFAULT_MODEL;
       let maxTokens = (agent && agent.maxTokens) || DEFAULT_MAX_TOKENS;
 
+      // Build tool definitions from the plugin registry
+      let tools = this._buildToolDefinitions(executionContext);
+
       let client = this._createClient(apiKey);
 
-      let totalInputTokens  = 0;
-      let totalOutputTokens = 0;
+      let totalInputTokens              = 0;
+      let totalOutputTokens             = 0;
+      let totalCacheReadInputTokens     = 0;
+      let totalCacheCreationInputTokens = 0;
 
       while (true) {
         let pendingToolCalls = [];
         let hadToolCalls     = false;
 
-        let stream = await this._createStream(client, systemPrompt, apiMessages, { model, maxTokens });
+        let stream = await this._createStream(client, systemPrompt, apiMessages, { model, maxTokens, tools });
 
         let currentBlocks = new Map();
 
         for await (let event of stream) {
           if (event.type === 'message_start') {
-            if (event.message && event.message.usage)
-              totalInputTokens += event.message.usage.input_tokens || 0;
+            if (event.message && event.message.usage) {
+              totalInputTokens              += event.message.usage.input_tokens || 0;
+              totalCacheReadInputTokens     += event.message.usage.cache_read_input_tokens || 0;
+              totalCacheCreationInputTokens += event.message.usage.cache_creation_input_tokens || 0;
+            }
 
             continue;
           }
@@ -249,7 +272,7 @@ export function setup(pluginContext) {
 
             if (block.type === 'tool_use') {
               entry.id   = block.id;
-              entry.name = block.name;
+              entry.name = decodeToolName(block.name);
             }
 
             currentBlocks.set(event.index, entry);
@@ -264,12 +287,27 @@ export function setup(pluginContext) {
 
             let delta = event.delta || {};
 
-            if (delta.type === 'text_delta')
+            if (delta.type === 'text_delta') {
               block.data += delta.text || '';
-            else if (delta.type === 'input_json_delta')
+
+              yield {
+                type:       'delta',
+                content:    { text: delta.text || '' },
+                authorType: 'agent',
+                authorID:   (agent && agent.id) || null,
+              };
+            } else if (delta.type === 'input_json_delta') {
               block.data += delta.partial_json || '';
-            else if (delta.type === 'thinking_delta')
+            } else if (delta.type === 'thinking_delta') {
               block.data += delta.thinking || '';
+
+              yield {
+                type:       'reflection-delta',
+                content:    { text: delta.thinking || '' },
+                authorType: 'agent',
+                authorID:   (agent && agent.id) || null,
+              };
+            }
 
             continue;
           }
@@ -342,17 +380,22 @@ export function setup(pluginContext) {
           let toolUseBlocks = pendingToolCalls.map((tc) => ({
             type:  'tool_use',
             id:    tc.content.toolUseId,
-            name:  tc.content.toolName,
+            name:  encodeToolName(tc.content.toolName),
             input: tc.content.arguments,
           }));
 
           apiMessages.push({ role: 'assistant', content: toolUseBlocks });
 
-          let toolResultBlocks = pendingToolCalls.map((tc) => ({
-            type:        'tool_result',
-            tool_use_id: tc.content.toolUseId,
-            content:     (tc.result && tc.result.content && tc.result.content.output) || '',
-          }));
+          let toolResultBlocks = pendingToolCalls.map((tc) => {
+            let output = (tc.result && tc.result.content && tc.result.content.output) || '';
+            let content = (typeof output === 'string') ? output : JSON.stringify(output);
+
+            return {
+              type:        'tool_result',
+              tool_use_id: tc.content.toolUseId,
+              content,
+            };
+          });
 
           apiMessages.push({ role: 'user', content: toolResultBlocks });
 
@@ -366,11 +409,44 @@ export function setup(pluginContext) {
         type:    'done',
         content: {
           usage: {
-            inputTokens:  totalInputTokens,
-            outputTokens: totalOutputTokens,
+            inputTokens:              totalInputTokens,
+            outputTokens:             totalOutputTokens,
+            cacheReadInputTokens:     totalCacheReadInputTokens,
+            cacheCreationInputTokens: totalCacheCreationInputTokens,
           },
         },
       };
+    }
+
+    // ---------------------------------------------------------------------------
+    // Build tool definitions from plugin registry for the Claude API
+    // ---------------------------------------------------------------------------
+
+    _buildToolDefinitions(executionContext) {
+      if (!executionContext || !executionContext.getProperty)
+        return [];
+
+      let registry = executionContext.getProperty('pluginRegistry');
+      if (!registry)
+        return [];
+
+      let tools     = registry.getTools();
+      let apiTools  = [];
+
+      for (let [name, ToolClass] of tools) {
+        let schema = ToolClass.inputSchema || {
+          type:       'object',
+          properties: {},
+        };
+
+        apiTools.push({
+          name:         encodeToolName(name),
+          description:  ToolClass.description || name,
+          input_schema: schema,
+        });
+      }
+
+      return apiTools;
     }
 
     // ---------------------------------------------------------------------------
@@ -386,34 +462,26 @@ export function setup(pluginContext) {
     // ---------------------------------------------------------------------------
 
     async *_createStream(client, systemPrompt, messages, options = {}) {
-      let { model, maxTokens } = options;
+      let { model, maxTokens, tools } = options;
 
-      let stream = client.messages.stream({
+      let requestParams = {
         model:      model || DEFAULT_MODEL,
         max_tokens: maxTokens || DEFAULT_MAX_TOKENS,
-        system:     systemPrompt,
+        system:     [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages,
-      });
+      };
+
+      if (tools && tools.length > 0)
+        requestParams.tools = tools;
+
+      let stream = client.messages.stream(requestParams);
 
       for await (let event of stream)
         yield event;
     }
   }
 
-  let agentTypes = context.getProperty
-    ? context.getProperty('agentTypes')
-    : (context.agentTypes || null);
+  registerAgentType('claude', ClaudeAgent);
 
-  if (!agentTypes) {
-    agentTypes = new Map();
-
-    if (context.setProperty)
-      context.setProperty('agentTypes', agentTypes);
-  }
-
-  agentTypes.set('claude', ClaudeAgent);
-
-  return () => {
-    agentTypes.delete('claude');
-  };
+  return () => {};  // teardown
 }
