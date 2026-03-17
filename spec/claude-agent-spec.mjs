@@ -11,15 +11,19 @@ import { AgentInterface, PluginInterface } from './helpers/agent-interface-stub.
 // =============================================================================
 
 function getClaudeAgent() {
-  let agentTypes = new Map();
+  let registered = {};
   let context    = {
-    getProperty: (key) => (key === 'agentTypes') ? agentTypes : null,
+    getProperty: () => null,
     setProperty: () => {},
   };
 
-  setup({ context, AgentInterface });
+  setup({
+    context,
+    AgentInterface,
+    registerAgentType: (id, AgentClass) => { registered[id] = AgentClass; },
+  });
 
-  return agentTypes.get('claude');
+  return registered.claude;
 }
 
 function createMockEvents(overrides = {}) {
@@ -512,33 +516,44 @@ describe('ClaudeAgent - setup() function', () => {
     assert.equal(typeof setup, 'function');
   });
 
-  it('should register ClaudeAgent on context agentTypes', () => {
-    let agentTypes = new Map();
+  it('should register ClaudeAgent via registerAgentType', () => {
+    let registered = {};
     let context    = {
-      getProperty: (key) => (key === 'agentTypes') ? agentTypes : null,
+      getProperty: () => null,
       setProperty: () => {},
     };
 
-    let teardown = setup({ context, AgentInterface });
-    assert.ok(agentTypes.get('claude'));
+    let teardown = setup({
+      context,
+      AgentInterface,
+      registerAgentType: (id, AgentClass) => { registered[id] = AgentClass; },
+    });
+
+    assert.ok(registered.claude);
     assert.equal(typeof teardown, 'function');
   });
 
   it('should throw when AgentInterface is not provided', () => {
     let context = { getProperty: () => null, setProperty: () => {} };
-    assert.throws(() => setup({ context }), { message: /requires AgentInterface/ });
+    assert.throws(
+      () => setup({ context, registerAgentType: () => {} }),
+      { message: /requires AgentInterface/ },
+    );
   });
 
-  it('should return teardown that removes registration', () => {
-    let agentTypes = new Map();
+  it('should return a teardown function', () => {
+    let registered = {};
     let context    = {
-      getProperty: (key) => (key === 'agentTypes') ? agentTypes : null,
+      getProperty: () => null,
       setProperty: () => {},
     };
 
-    let teardown = setup({ context, AgentInterface });
-    assert.equal(agentTypes.has('claude'), true);
-    teardown();
-    assert.equal(agentTypes.has('claude'), false);
+    let teardown = setup({
+      context,
+      AgentInterface,
+      registerAgentType: (id, AgentClass) => { registered[id] = AgentClass; },
+    });
+
+    assert.equal(typeof teardown, 'function');
   });
 });

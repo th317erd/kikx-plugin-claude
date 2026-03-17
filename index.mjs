@@ -54,6 +54,7 @@ export function setup(pluginContext) {
     static displayName = 'Claude';
     static description = 'Anthropic Claude AI agent';
     static agentType   = 'claude';
+    static serviceType = 'anthropic';
 
     // ---------------------------------------------------------------------------
     // Capabilities
@@ -120,7 +121,7 @@ export function setup(pluginContext) {
             role:    'assistant',
             content: [{
               type:  'tool_use',
-              id:    (msg.content && msg.content.toolUseId) || `tool_${Date.now()}`,
+              id:    (msg.content && (msg.content.toolUseID || msg.content.toolUseId)) || `tool_${Date.now()}`,
               name:  encodeToolName(msg.content && msg.content.toolName || ''),
               input: (msg.content && msg.content.arguments) || {},
             }],
@@ -134,7 +135,7 @@ export function setup(pluginContext) {
             role:    'user',
             content: [{
               type:        'tool_result',
-              tool_use_id: (msg.content && msg.content.toolUseId) || '',
+              tool_use_id: (msg.content && (msg.content.toolUseID || msg.content.toolUseId)) || '',
               content:     resultText,
             }],
           };
@@ -263,6 +264,19 @@ export function setup(pluginContext) {
               totalCacheCreationInputTokens += event.message.usage.cache_creation_input_tokens || 0;
             }
 
+            // Yield partial usage so interrupted interactions still report tokens
+            yield {
+              type:    'usage',
+              content: {
+                usage: {
+                  inputTokens:              totalInputTokens,
+                  outputTokens:             totalOutputTokens,
+                  cacheReadInputTokens:     totalCacheReadInputTokens,
+                  cacheCreationInputTokens: totalCacheCreationInputTokens,
+                },
+              },
+            };
+
             continue;
           }
 
@@ -371,6 +385,19 @@ export function setup(pluginContext) {
           if (event.type === 'message_delta') {
             if (event.usage)
               totalOutputTokens += event.usage.output_tokens || 0;
+
+            // Yield updated usage with output tokens
+            yield {
+              type:    'usage',
+              content: {
+                usage: {
+                  inputTokens:              totalInputTokens,
+                  outputTokens:             totalOutputTokens,
+                  cacheReadInputTokens:     totalCacheReadInputTokens,
+                  cacheCreationInputTokens: totalCacheCreationInputTokens,
+                },
+              },
+            };
 
             continue;
           }
