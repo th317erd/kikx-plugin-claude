@@ -18,8 +18,9 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
-const DEFAULT_MODEL      = 'claude-sonnet-4-20250514';
-const DEFAULT_MAX_TOKENS = 4096;
+const DEFAULT_MODEL           = 'claude-sonnet-4-20250514';
+const DEFAULT_MAX_TOKENS      = 16000;
+const DEFAULT_THINKING_BUDGET = 10000;
 
 const HTML_INSTRUCTION = [
   'Output your responses in HTML format.',
@@ -235,8 +236,9 @@ export function setup(pluginContext) {
       let systemPrompt = this.getSystemPrompt(agent, executionContext);
       let apiMessages  = this.assembleMessages(rawMessages, systemPrompt);
 
-      let model     = (agent && agent.model) || DEFAULT_MODEL;
-      let maxTokens = (agent && agent.maxTokens) || DEFAULT_MAX_TOKENS;
+      let model          = (agent && agent.model) || DEFAULT_MODEL;
+      let maxTokens      = (agent && agent.maxTokens) || DEFAULT_MAX_TOKENS;
+      let thinkingBudget = (agent && agent.thinkingBudget) || DEFAULT_THINKING_BUDGET;
 
       // Build tool definitions from the plugin registry
       let tools = this._buildToolDefinitions(executionContext);
@@ -252,7 +254,7 @@ export function setup(pluginContext) {
         let pendingToolCalls = [];
         let hadToolCalls     = false;
 
-        let stream = await this._createStream(client, systemPrompt, apiMessages, { model, maxTokens, tools });
+        let stream = await this._createStream(client, systemPrompt, apiMessages, { model, maxTokens, tools, thinkingBudget });
 
         let currentBlocks = new Map();
 
@@ -489,11 +491,19 @@ export function setup(pluginContext) {
     // ---------------------------------------------------------------------------
 
     async *_createStream(client, systemPrompt, messages, options = {}) {
-      let { model, maxTokens, tools } = options;
+      let { model, maxTokens, tools, thinkingBudget } = options;
+
+      let effectiveMaxTokens = maxTokens || DEFAULT_MAX_TOKENS;
+      let effectiveBudget    = thinkingBudget || DEFAULT_THINKING_BUDGET;
+
+      // budget_tokens must be less than max_tokens
+      if (effectiveBudget >= effectiveMaxTokens)
+        effectiveBudget = Math.floor(effectiveMaxTokens * 0.6);
 
       let requestParams = {
         model:      model || DEFAULT_MODEL,
-        max_tokens: maxTokens || DEFAULT_MAX_TOKENS,
+        max_tokens: effectiveMaxTokens,
+        thinking:   { type: 'enabled', budget_tokens: effectiveBudget },
         system:     [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
         messages,
       };

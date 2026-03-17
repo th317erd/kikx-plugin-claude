@@ -488,6 +488,188 @@ describe('ClaudeAgent - generator (reflection)', () => {
 });
 
 // =============================================================================
+// Generator — extended thinking options
+// =============================================================================
+
+describe('ClaudeAgent - generator (extended thinking)', () => {
+  let ClaudeAgent;
+
+  before(() => { ClaudeAgent = getClaudeAgent(); });
+
+  it('should pass default thinkingBudget in options when agent has none', async () => {
+    let events = createMockEvents({ text: '<p>Hello</p>' });
+    let agent  = createTestableAgent(ClaudeAgent, events);
+
+    let generator = await agent.execute({
+      messages: [], agent: createMockAgent(), session: {}, context: null, apiKey: 'sk-test-key',
+    });
+
+    await generator.next();
+
+    assert.equal(agent._apiCalls.length, 1);
+    assert.equal(agent._apiCalls[0].options.thinkingBudget, 10000);
+  });
+
+  it('should pass custom thinkingBudget from agent config', async () => {
+    let events = createMockEvents({ text: '<p>Hello</p>' });
+    let agent  = createTestableAgent(ClaudeAgent, events);
+
+    let generator = await agent.execute({
+      messages: [], agent: createMockAgent({ thinkingBudget: 5000 }), session: {}, context: null, apiKey: 'sk-test-key',
+    });
+
+    await generator.next();
+
+    assert.equal(agent._apiCalls[0].options.thinkingBudget, 5000);
+  });
+
+  it('should pass maxTokens of 16000 by default', async () => {
+    let events = createMockEvents({ text: '<p>Hello</p>' });
+    let agent  = createTestableAgent(ClaudeAgent, events);
+
+    let generator = await agent.execute({
+      messages: [], agent: createMockAgent(), session: {}, context: null, apiKey: 'sk-test-key',
+    });
+
+    await generator.next();
+
+    assert.equal(agent._apiCalls[0].options.maxTokens, 16000);
+  });
+});
+
+// =============================================================================
+// _createStream — request params
+// =============================================================================
+
+describe('ClaudeAgent - _createStream (request params)', () => {
+  let ClaudeAgent;
+
+  before(() => { ClaudeAgent = getClaudeAgent(); });
+
+  it('should include thinking param in API request', async () => {
+    let capturedParams = null;
+    let instance       = new ClaudeAgent(null);
+
+    let mockClient = {
+      messages: {
+        stream: (params) => {
+          capturedParams = params;
+
+          return (async function* () {
+            yield { type: 'message_start', message: { usage: { input_tokens: 10 } } };
+            yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } };
+            yield { type: 'message_stop' };
+          })();
+        },
+      },
+    };
+
+    let gen = instance._createStream(mockClient, 'system prompt', [], {
+      model:          'claude-sonnet-4-20250514',
+      maxTokens:      16000,
+      tools:          [],
+      thinkingBudget: 10000,
+    });
+
+    for await (let _event of gen) { /* drain */ }
+
+    assert.ok(capturedParams, 'request params should have been captured');
+    assert.deepEqual(capturedParams.thinking, { type: 'enabled', budget_tokens: 10000 });
+    assert.equal(capturedParams.max_tokens, 16000);
+  });
+
+  it('should cap thinkingBudget when it equals or exceeds maxTokens', async () => {
+    let capturedParams = null;
+    let instance       = new ClaudeAgent(null);
+
+    let mockClient = {
+      messages: {
+        stream: (params) => {
+          capturedParams = params;
+
+          return (async function* () {
+            yield { type: 'message_start', message: { usage: { input_tokens: 10 } } };
+            yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } };
+            yield { type: 'message_stop' };
+          })();
+        },
+      },
+    };
+
+    let gen = instance._createStream(mockClient, 'system prompt', [], {
+      model:          'claude-sonnet-4-20250514',
+      maxTokens:      5000,
+      thinkingBudget: 10000,
+    });
+
+    for await (let _event of gen) { /* drain */ }
+
+    assert.ok(capturedParams.thinking.budget_tokens < 5000, 'budget should be capped below maxTokens');
+    assert.equal(capturedParams.thinking.budget_tokens, 3000); // Math.floor(5000 * 0.6)
+  });
+
+  it('should use default budget when thinkingBudget is not provided', async () => {
+    let capturedParams = null;
+    let instance       = new ClaudeAgent(null);
+
+    let mockClient = {
+      messages: {
+        stream: (params) => {
+          capturedParams = params;
+
+          return (async function* () {
+            yield { type: 'message_start', message: { usage: { input_tokens: 10 } } };
+            yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } };
+            yield { type: 'message_stop' };
+          })();
+        },
+      },
+    };
+
+    let gen = instance._createStream(mockClient, 'system prompt', [], {
+      model:     'claude-sonnet-4-20250514',
+      maxTokens: 16000,
+    });
+
+    for await (let _event of gen) { /* drain */ }
+
+    assert.deepEqual(capturedParams.thinking, { type: 'enabled', budget_tokens: 10000 });
+  });
+
+  it('should include tools in request when provided', async () => {
+    let capturedParams = null;
+    let instance       = new ClaudeAgent(null);
+
+    let testTools = [{ name: 'test_tool', description: 'A test', input_schema: { type: 'object', properties: {} } }];
+
+    let mockClient = {
+      messages: {
+        stream: (params) => {
+          capturedParams = params;
+
+          return (async function* () {
+            yield { type: 'message_start', message: { usage: { input_tokens: 10 } } };
+            yield { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 5 } };
+            yield { type: 'message_stop' };
+          })();
+        },
+      },
+    };
+
+    let gen = instance._createStream(mockClient, 'system prompt', [], {
+      model:          'claude-sonnet-4-20250514',
+      maxTokens:      16000,
+      tools:          testTools,
+      thinkingBudget: 10000,
+    });
+
+    for await (let _event of gen) { /* drain */ }
+
+    assert.deepEqual(capturedParams.tools, testTools);
+  });
+});
+
+// =============================================================================
 // Generator — error handling
 // =============================================================================
 
