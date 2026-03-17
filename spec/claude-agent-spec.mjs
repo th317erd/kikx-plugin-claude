@@ -258,25 +258,25 @@ describe('ClaudeAgent - getSystemPrompt()', () => {
     instance    = new ClaudeAgent(null);
   });
 
-  it('should include HTML output instruction', () => {
-    let prompt = instance.getSystemPrompt({}, null);
+  it('should include HTML output instruction', async () => {
+    let prompt = await instance.getSystemPrompt({}, null);
     assert.ok(prompt.includes('Output your responses in HTML format'));
     assert.ok(prompt.includes('Do not use markdown'));
   });
 
-  it('should include base helpful assistant instruction', () => {
-    let prompt = instance.getSystemPrompt({}, null);
+  it('should include base helpful assistant instruction', async () => {
+    let prompt = await instance.getSystemPrompt({}, null);
     assert.ok(prompt.includes('You are a helpful assistant.'));
   });
 
-  it('should append agent instructions when present', () => {
-    let prompt = instance.getSystemPrompt({ instructions: 'Always speak like a pirate.' }, null);
+  it('should append agent instructions when present', async () => {
+    let prompt = await instance.getSystemPrompt({ instructions: 'Always speak like a pirate.' }, null);
     assert.ok(prompt.includes('Always speak like a pirate.'));
     assert.ok(prompt.includes('HTML format'));
   });
 
-  it('should handle null agent gracefully', () => {
-    let prompt = instance.getSystemPrompt(null, null);
+  it('should handle null agent gracefully', async () => {
+    let prompt = await instance.getSystemPrompt(null, null);
     assert.ok(prompt.includes('You are a helpful assistant.'));
   });
 });
@@ -484,6 +484,70 @@ describe('ClaudeAgent - generator (reflection)', () => {
 
     let second = await generator.next();
     assert.equal(second.value.type, 'message');
+  });
+});
+
+// =============================================================================
+// System prompt — behaviors injection
+// =============================================================================
+
+describe('ClaudeAgent - getSystemPrompt (behaviors)', () => {
+  let ClaudeAgent;
+
+  before(() => { ClaudeAgent = getClaudeAgent(); });
+
+  it('should include behaviors in system prompt when agent has getBehaviors', async () => {
+    let instance = new ClaudeAgent(null);
+
+    let mockAgent = createMockAgent({
+      getBehaviors: async () => '{"crackers_response":{"trigger":"when user mentions crackers","response":"Poly want!"}}',
+    });
+
+    let prompt = await instance.getSystemPrompt(mockAgent, null);
+
+    assert.ok(prompt.includes('--- BEHAVIORS ---'), 'should include BEHAVIORS header');
+    assert.ok(prompt.includes('crackers_response'), 'should include behavior content');
+    assert.ok(prompt.includes('BEHAVIORS ARE MANDATORY'), 'should include mandate text');
+  });
+
+  it('should not include behaviors when agent has no getBehaviors method', async () => {
+    let instance  = new ClaudeAgent(null);
+    let mockAgent = createMockAgent();
+
+    let prompt = await instance.getSystemPrompt(mockAgent, null);
+
+    assert.ok(!prompt.includes('BEHAVIORS'), 'should not include BEHAVIORS');
+  });
+
+  it('should not include behaviors when getBehaviors returns null', async () => {
+    let instance = new ClaudeAgent(null);
+
+    let mockAgent = createMockAgent({
+      getBehaviors: async () => null,
+    });
+
+    let prompt = await instance.getSystemPrompt(mockAgent, null);
+
+    assert.ok(!prompt.includes('BEHAVIORS'), 'should not include BEHAVIORS when null');
+  });
+
+  it('should pass behaviors through to _createStream system prompt', async () => {
+    let events = createMockEvents({ text: '<p>Hello</p>' });
+    let agent  = createTestableAgent(ClaudeAgent, events);
+
+    let mockAgent = createMockAgent({
+      getBehaviors: async () => '{"test_behavior":{"trigger":"test","response":"pass"}}',
+    });
+
+    let generator = await agent.execute({
+      messages: [], agent: mockAgent, session: {}, context: null, apiKey: 'sk-test-key',
+    });
+
+    await generator.next();
+
+    let systemPrompt = agent._apiCalls[0].systemPrompt;
+    assert.ok(systemPrompt.includes('--- BEHAVIORS ---'), 'system prompt in API call should include BEHAVIORS');
+    assert.ok(systemPrompt.includes('test_behavior'), 'system prompt should include behavior content');
   });
 });
 

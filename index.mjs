@@ -74,7 +74,7 @@ export function setup(pluginContext) {
     // System prompt — HTML output instruction + agent instructions
     // ---------------------------------------------------------------------------
 
-    getSystemPrompt(agent, _context) {
+    async getSystemPrompt(agent, _context) {
       let parts = [];
 
       parts.push('You are a helpful assistant.');
@@ -82,6 +82,28 @@ export function setup(pluginContext) {
 
       if (agent && agent.instructions)
         parts.push(agent.instructions);
+
+      // Include agent behaviors in the system prompt — this is the most
+      // authoritative location for Claude models and ensures behaviors
+      // are followed from the very first interaction.
+      if (agent && typeof agent.getBehaviors === 'function') {
+        let behaviors = await agent.getBehaviors();
+
+        if (behaviors) {
+          parts.push(
+            `--- BEHAVIORS ---\n${behaviors}\n--- END BEHAVIORS ---`,
+          );
+
+          parts.push(
+            'BEHAVIORS ARE MANDATORY. Before responding to EVERY user message, you MUST:\n' +
+            '1. Review your BEHAVIORS section above.\n' +
+            '2. Check if any behavior applies to the current message.\n' +
+            '3. If a behavior applies, follow its instructions EXACTLY — behaviors override your default behavior.\n' +
+            '4. If no behavior applies, respond normally.\n\n' +
+            'Behaviors are not suggestions — they are behavioral rules you must obey on every interaction.',
+          );
+        }
+      }
 
       return parts.join('\n\n');
     }
@@ -233,7 +255,7 @@ export function setup(pluginContext) {
       if (!apiKey)
         throw new Error('No API key available — provide apiKey in params or encrypted key on agent');
 
-      let systemPrompt = this.getSystemPrompt(agent, executionContext);
+      let systemPrompt = await this.getSystemPrompt(agent, executionContext);
       let apiMessages  = this.assembleMessages(rawMessages, systemPrompt);
 
       let model          = (agent && agent.model) || DEFAULT_MODEL;
