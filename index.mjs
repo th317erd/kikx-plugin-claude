@@ -58,6 +58,53 @@ export function setup(pluginContext) {
     static serviceType = 'anthropic';
 
     // ---------------------------------------------------------------------------
+    // Model Registry
+    // ---------------------------------------------------------------------------
+
+    static getModels() {
+      return [
+        {
+          id:              'claude-opus-4-6',
+          contextWindow:   200000,
+          maxOutputTokens: 32000,
+          displayName:     'Claude Opus 4.6',
+          description:     'Most capable Claude model.',
+          pricePerToken:   { input: 15.0, output: 75.0 },
+          useWhen:         'Complex reasoning, long documents.',
+        },
+        {
+          id:              'claude-sonnet-4-6',
+          contextWindow:   200000,
+          maxOutputTokens: 16000,
+          displayName:     'Claude Sonnet 4.6',
+          description:     'Balanced performance and cost.',
+          pricePerToken:   { input: 3.0, output: 15.0 },
+          useWhen:         'Most tasks, good balance of capability and speed.',
+        },
+        {
+          id:              'claude-haiku-4-5-20251001',
+          contextWindow:   200000,
+          maxOutputTokens: 8192,
+          displayName:     'Claude Haiku 4.5',
+          description:     'Fastest and most cost-efficient.',
+          pricePerToken:   { input: 0.8, output: 4.0 },
+          useWhen:         'Fast, simple tasks or high-volume applications.',
+        },
+      ];
+    }
+
+    // ---------------------------------------------------------------------------
+    // Token Estimation
+    // ---------------------------------------------------------------------------
+
+    // Anthropic tokenizer approximation: ~3.5 chars per token for English.
+    // More accurate than the base class default of chars/4.
+    // eslint-disable-next-line no-unused-vars
+    estimateTokens(text, { cache = false } = {}) {
+      return Math.ceil((text || '').length / 3.5);
+    }
+
+    // ---------------------------------------------------------------------------
     // Capabilities
     // ---------------------------------------------------------------------------
 

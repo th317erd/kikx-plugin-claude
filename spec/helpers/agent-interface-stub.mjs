@@ -21,6 +21,11 @@ export class AgentInterface extends PluginInterface {
   static description  = null;
   static agentType    = null;
 
+  // Model registry stubs — override in plugins
+  static getModels() { return []; }
+  // eslint-disable-next-line no-unused-vars
+  estimateTokens(text, _options) { return Math.ceil((text || '').length / 4); }
+
   async execute(params) {
     return this._createGenerator(params);
   }

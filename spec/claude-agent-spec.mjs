@@ -803,3 +803,131 @@ describe('ClaudeAgent - setup() function', () => {
     assert.equal(typeof teardown, 'function');
   });
 });
+
+// =============================================================================
+// Model Registry — ClaudeAgent.getModels()
+// =============================================================================
+
+describe('ClaudeAgent — Model Registry', () => {
+  let ClaudeAgent;
+
+  before(() => {
+    ClaudeAgent = getClaudeAgent();
+  });
+
+  it('should return an array of model descriptors', () => {
+    let models = ClaudeAgent.getModels();
+    assert.ok(Array.isArray(models));
+    assert.ok(models.length > 0);
+  });
+
+  it('should include claude-opus-4-6', () => {
+    let models = ClaudeAgent.getModels();
+    let opus   = models.find((m) => m.id === 'claude-opus-4-6');
+    assert.ok(opus, 'claude-opus-4-6 should be present');
+    assert.equal(opus.contextWindow, 200000);
+    assert.equal(opus.maxOutputTokens, 32000);
+    assert.equal(typeof opus.displayName, 'string');
+    assert.equal(typeof opus.description, 'string');
+    assert.equal(typeof opus.useWhen, 'string');
+    assert.ok(typeof opus.pricePerToken === 'object');
+    assert.ok(typeof opus.pricePerToken.input === 'number');
+    assert.ok(typeof opus.pricePerToken.output === 'number');
+  });
+
+  it('should include claude-sonnet-4-6', () => {
+    let models  = ClaudeAgent.getModels();
+    let sonnet  = models.find((m) => m.id === 'claude-sonnet-4-6');
+    assert.ok(sonnet, 'claude-sonnet-4-6 should be present');
+    assert.equal(sonnet.contextWindow, 200000);
+    assert.equal(sonnet.maxOutputTokens, 16000);
+  });
+
+  it('should include claude-haiku-4-5-20251001', () => {
+    let models = ClaudeAgent.getModels();
+    let haiku  = models.find((m) => m.id === 'claude-haiku-4-5-20251001');
+    assert.ok(haiku, 'claude-haiku-4-5-20251001 should be present');
+    assert.equal(haiku.contextWindow, 200000);
+    assert.equal(haiku.maxOutputTokens, 8192);
+  });
+
+  it('should have all required fields on each model', () => {
+    let models         = ClaudeAgent.getModels();
+    let requiredFields = ['id', 'contextWindow', 'maxOutputTokens', 'displayName', 'description', 'pricePerToken', 'useWhen'];
+
+    for (let model of models) {
+      for (let field of requiredFields)
+        assert.ok(field in model, `Model ${model.id} is missing field: ${field}`);
+    }
+  });
+
+  it('should have pricePerToken with input and output fields', () => {
+    let models = ClaudeAgent.getModels();
+
+    for (let model of models) {
+      assert.ok(typeof model.pricePerToken.input === 'number', `${model.id} input price should be number`);
+      assert.ok(typeof model.pricePerToken.output === 'number', `${model.id} output price should be number`);
+    }
+  });
+});
+
+// =============================================================================
+// Token Estimation — ClaudeAgent.estimateTokens()
+// =============================================================================
+
+describe('ClaudeAgent — estimateTokens()', () => {
+  let instance;
+
+  before(() => {
+    let ClaudeAgentClass = getClaudeAgent();
+    instance = new ClaudeAgentClass({});
+  });
+
+  it('should return a positive integer for normal text', () => {
+    let result = instance.estimateTokens('hello world');
+    assert.ok(Number.isInteger(result));
+    assert.ok(result > 0);
+  });
+
+  it('should return 0 for null input', () => {
+    let result = instance.estimateTokens(null);
+    assert.equal(result, 0);
+  });
+
+  it('should return 0 for undefined input', () => {
+    let result = instance.estimateTokens(undefined);
+    assert.equal(result, 0);
+  });
+
+  it('should return 0 for empty string', () => {
+    let result = instance.estimateTokens('');
+    assert.equal(result, 0);
+  });
+
+  it('should use chars/3.5 approximation (closer than chars/4)', () => {
+    // 350 chars -> ceil(350/3.5) = 100
+    let result = instance.estimateTokens('a'.repeat(350));
+    assert.equal(result, 100);
+  });
+
+  it('should ceil fractional token count', () => {
+    // 1 char -> ceil(1/3.5) = 1
+    let result = instance.estimateTokens('a');
+    assert.equal(result, 1);
+  });
+
+  it('should accept options without throwing', () => {
+    assert.doesNotThrow(() => {
+      instance.estimateTokens('text', { cache: true });
+    });
+  });
+
+  it('should produce higher token estimates than chars/4 (more accurate for Claude)', () => {
+    // Claude tokenizes more densely — 3.5 chars/token vs 4 chars/token
+    let text       = 'hello world this is a test sentence';
+    let chars4     = Math.ceil(text.length / 4);
+    let chars3half = instance.estimateTokens(text);
+    // chars/3.5 >= chars/4 always
+    assert.ok(chars3half >= chars4, 'Claude estimator should produce >= tokens vs chars/4');
+  });
+});
