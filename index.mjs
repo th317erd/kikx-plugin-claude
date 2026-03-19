@@ -538,6 +538,50 @@ export function setup(pluginContext) {
       for await (let event of stream)
         yield event;
     }
+
+    // ---------------------------------------------------------------------------
+    // Compaction — rolling compaction support
+    // ---------------------------------------------------------------------------
+
+    shouldCompact({ estimatedTokens, contextWindow }) {
+      if (!contextWindow || !estimatedTokens)
+        return { compact: false, reason: '' };
+
+      // Compact when estimated tokens exceed 80% of context window
+      let threshold = Math.floor(contextWindow * 0.80);
+      let shouldRun = estimatedTokens >= threshold;
+
+      return {
+        compact:  shouldRun,
+        reason:   shouldRun ? `estimated ${estimatedTokens} tokens exceeds ${threshold} threshold (${contextWindow} context window)` : '',
+      };
+    }
+
+    getMaxCompactionTokens({ contextWindow }) {
+      if (!contextWindow)
+        return 8000;
+
+      return Math.floor(contextWindow * 0.30);
+    }
+
+    async _createSingleTurn(messages, options = {}) {
+      let { maxTokens, systemPrompt, apiKey, model } = options;
+
+      if (!apiKey)
+        throw new Error('apiKey is required in options for _createSingleTurn');
+
+      let client   = this._createClient(apiKey);
+      let response = await client.messages.create({
+        model:      model || DEFAULT_MODEL,
+        max_tokens: maxTokens || 8000,
+        system:     systemPrompt || undefined,
+        messages,
+      });
+
+      // Extract text from response
+      let textBlock = response.content.find((b) => b.type === 'text');
+      return textBlock ? textBlock.text : '';
+    }
   }
 
   registerAgentType('claude', ClaudeAgent);
