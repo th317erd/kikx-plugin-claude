@@ -22,6 +22,13 @@ const DEFAULT_MODEL           = 'claude-sonnet-4-20250514';
 const DEFAULT_MAX_TOKENS      = 16000;
 const DEFAULT_THINKING_BUDGET = 10000;
 
+// Debug logging — set KIKX_CLAUDE_DEBUG=1 to enable
+const DEBUG = !!(process.env.KIKX_CLAUDE_DEBUG || process.env.DEBUG_CLAUDE);
+function debugLog(...args) {
+  if (DEBUG)
+    console.log('[claude-plugin]', ...args);
+}
+
 const HTML_INSTRUCTION = [
   'Output your responses in HTML format.',
   'Use standard HTML tags for formatting (p, strong, em, code, pre, ul, ol, li, h1-h6, table, etc).',
@@ -305,6 +312,8 @@ export function setup(pluginContext) {
       let systemPrompt = await this.getSystemPrompt(agent, executionContext);
       let apiMessages  = this.assembleMessages(rawMessages, systemPrompt);
 
+      debugLog(`messages: ${apiMessages.length}, system prompt: ${systemPrompt.length} chars`);
+
       let model          = (agent && agent.model) || DEFAULT_MODEL;
       let maxTokens      = (agent && agent.maxTokens) || DEFAULT_MAX_TOKENS;
       let thinkingBudget = (agent && agent.thinkingBudget) || DEFAULT_THINKING_BUDGET;
@@ -312,22 +321,36 @@ export function setup(pluginContext) {
       // Build tool definitions from the plugin registry
       let tools = this._buildToolDefinitions(executionContext);
 
+      debugLog(`model: ${model}, maxTokens: ${maxTokens}, thinkingBudget: ${thinkingBudget}, tools: ${tools.length}`);
+
       let client = this._createClient(apiKey);
 
       let totalInputTokens              = 0;
       let totalOutputTokens             = 0;
       let totalCacheReadInputTokens     = 0;
       let totalCacheCreationInputTokens = 0;
+      let loopIteration                 = 0;
 
       while (true) {
+        loopIteration++;
         let pendingToolCalls = [];
         let hadToolCalls     = false;
 
+        debugLog(`loop iteration ${loopIteration}: creating stream...`);
+        let streamStartTime = Date.now();
+
         let stream = await this._createStream(client, systemPrompt, apiMessages, { model, maxTokens, tools, thinkingBudget });
 
+        debugLog(`stream created in ${Date.now() - streamStartTime}ms, iterating events...`);
+
         let currentBlocks = new Map();
+        let eventCount    = 0;
 
         for await (let event of stream) {
+          eventCount++;
+          if (eventCount <= 3 || eventCount % 50 === 0)
+            debugLog(`event #${eventCount}: ${event.type}`);
+
           if (event.type === 'message_start') {
             if (event.message && event.message.usage) {
               totalInputTokens              += event.message.usage.input_tokens || 0;
@@ -412,6 +435,7 @@ export function setup(pluginContext) {
               };
             } else if (block.type === 'tool_use') {
               hadToolCalls = true;
+              debugLog(`tool_use block complete: ${block.name} (id: ${block.id})`);
 
               let toolArguments = {};
 
@@ -435,7 +459,9 @@ export function setup(pluginContext) {
 
               pendingToolCalls.push(toolCall);
 
+              debugLog(`yielding tool-call: ${block.name}, waiting for result...`);
               let result = yield toolCall;
+              debugLog(`tool-call result received for ${block.name}: ${result ? 'has result' : 'no result'}`);
 
               if (result)
                 pendingToolCalls[pendingToolCalls.length - 1].result = result;
@@ -474,7 +500,10 @@ export function setup(pluginContext) {
           }
         }
 
+        debugLog(`stream ended: ${eventCount} events, hadToolCalls: ${hadToolCalls}, pending: ${pendingToolCalls.length}`);
+
         if (hadToolCalls && pendingToolCalls.length > 0) {
+          debugLog(`building tool-result messages for ${pendingToolCalls.length} tool call(s)`);
           let toolUseBlocks = pendingToolCalls.map((tc) => ({
             type:  'tool_use',
             id:    tc.content.toolUseId,
