@@ -49,8 +49,10 @@ function decodeToolName(name) {
 // Plugin setup() — registers ClaudeAgent with the plugin registry
 // =============================================================================
 
-export function setup(pluginContext) {
-  let { context, AgentInterface, registerAgentType } = pluginContext;
+export function setup(provide) {
+  provide(({ registry, context }) => {
+  let AgentInterface   = registry.getClass('AgentInterface');
+  let registerAgentType = (id, cls) => registry.registerAgentType(id, cls);
 
   if (!AgentInterface)
     throw new Error('kikx-plugin-claude requires AgentInterface in plugin context');
@@ -661,6 +663,5 @@ export function setup(pluginContext) {
   }
 
   registerAgentType('claude', ClaudeAgent);
-
-  return () => {};  // teardown
+  });  // end provide()
 }
