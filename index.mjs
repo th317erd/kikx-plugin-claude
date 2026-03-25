@@ -6,10 +6,10 @@
 // Implements AgentInterface using the official @anthropic-ai/sdk.
 //
 // Yield protocol:
-//   { type: 'message',    content: { html } }
-//   { type: 'tool-call',  content: { toolName, arguments, toolUseId } }
-//   { type: 'reflection', content: { text }, hidden: true }
-//   { type: 'done',       content: { usage: { inputTokens, outputTokens } } }
+//   { type: 'Message',    content: { html } }
+//   { type: 'ToolCall',   content: { toolName, arguments, toolUseId } }
+//   { type: 'Reflection', content: { text }, hidden: true }
+//   { type: 'Done',       content: { usage: { inputTokens, outputTokens } } }
 //
 // Two-channel architecture:
 //   1. Structured tool calls → server orchestration (tool_use blocks)
@@ -187,13 +187,13 @@ export function setup(pluginContext) {
         return { role: msg.role, content: msg.content };
 
       switch (msg.type) {
-        case 'message':
+        case 'Message':
           return {
             role:    (msg.authorType === 'agent') ? 'assistant' : 'user',
             content: (msg.content && msg.content.html) || (msg.content && msg.content.text) || '',
           };
 
-        case 'tool-call':
+        case 'ToolCall':
           return {
             role:    'assistant',
             content: [{
@@ -204,7 +204,7 @@ export function setup(pluginContext) {
             }],
           };
 
-        case 'tool-result': {
+        case 'ToolResult': {
           let output     = (msg.content && msg.content.output) || '';
           let resultText = (typeof output === 'string') ? output : JSON.stringify(output);
 
@@ -218,7 +218,7 @@ export function setup(pluginContext) {
           };
         }
 
-        case 'reflection':
+        case 'Reflection':
           return null;
 
         default:
@@ -360,7 +360,7 @@ export function setup(pluginContext) {
 
             // Yield partial usage so interrupted interactions still report tokens
             yield {
-              type:    'usage',
+              type:    'Usage',
               content: {
                 usage: {
                   inputTokens:              totalInputTokens,
@@ -399,7 +399,7 @@ export function setup(pluginContext) {
               block.data += delta.text || '';
 
               yield {
-                type:       'delta',
+                type:       'Delta',
                 content:    { text: delta.text || '' },
                 authorType: 'agent',
                 authorID:   (agent && agent.id) || null,
@@ -410,7 +410,7 @@ export function setup(pluginContext) {
               block.data += delta.thinking || '';
 
               yield {
-                type:       'reflection-delta',
+                type:       'ReflectionDelta',
                 content:    { text: delta.thinking || '' },
                 authorType: 'agent',
                 authorID:   (agent && agent.id) || null,
@@ -428,7 +428,7 @@ export function setup(pluginContext) {
 
             if (block.type === 'text') {
               yield {
-                type:       'message',
+                type:       'Message',
                 content:    { html: block.data },
                 authorType: 'agent',
                 authorID:   (agent && agent.id) || null,
@@ -447,7 +447,7 @@ export function setup(pluginContext) {
               }
 
               let toolCall = {
-                type:       'tool-call',
+                type:       'ToolCall',
                 content:    {
                   toolName:  block.name,
                   arguments: toolArguments,
@@ -467,7 +467,7 @@ export function setup(pluginContext) {
                 pendingToolCalls[pendingToolCalls.length - 1].result = result;
             } else if (block.type === 'thinking') {
               yield {
-                type:       'reflection',
+                type:       'Reflection',
                 content:    { text: block.data },
                 hidden:     true,
                 authorType: 'agent',
@@ -485,7 +485,7 @@ export function setup(pluginContext) {
 
             // Yield updated usage with output tokens
             yield {
-              type:    'usage',
+              type:    'Usage',
               content: {
                 usage: {
                   inputTokens:              totalInputTokens,
@@ -533,7 +533,7 @@ export function setup(pluginContext) {
       }
 
       yield {
-        type:    'done',
+        type:    'Done',
         content: {
           usage: {
             inputTokens:              totalInputTokens,
